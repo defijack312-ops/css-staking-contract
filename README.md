@@ -1,10 +1,14 @@
-# Street Access Pass Staking Contract
+# Street Access Pass Staking Contract v2.0
 
-A Solidity smart contract for staking Street Access Pass ERC-1155 NFTs to gain subscription access to CSS Insights.
+Staking contract for Street Access Pass ERC-1155 NFTs with **adjustable cooldown**.
 
-## 🎯 Overview
+## Key Changes from v1
 
-This contract allows holders of the Street Access Pass NFT to stake their tokens in exchange for tiered subscription access:
+- **Adjustable Cooldown**: Owner can change the unstaking cooldown period at any time
+- **Constructor Parameter**: Initial cooldown is set at deployment
+- **Safety Limits**: Cooldown must be between 1 hour and 30 days
+
+## Staking Tiers
 
 | Tier | NFTs Required | Monthly Value |
 |------|---------------|---------------|
@@ -12,195 +16,120 @@ This contract allows holders of the Street Access Pass NFT to stake their tokens
 | Pro | 5 NFTs | $50/month |
 | Premium | 10 NFTs | $300/month |
 
-## 🔐 Security Features
+## Deployment
 
-- **7-Day Unstaking Cooldown**: Prevents flash-staking attacks
-- **ReentrancyGuard**: Protects against reentrancy attacks
-- **Pausable**: Contract can be paused in emergencies
-- **Ownable**: Admin functions restricted to owner
-- **Emergency Withdraw**: Admin can rescue stuck funds
-
-## 📋 Contract Details
-
-- **NFT Contract**: `0x3b90aaaa8f3850edbad137b52e2754d25982e173`
-- **Token Standard**: ERC-1155
-- **Token ID**: 1
-- **Network**: Ethereum Mainnet
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js v18+
-- npm or yarn
-
-### Installation
+### 1. Setup
 
 ```bash
-cd contracts
+cd staking-mainnet
 npm install
 ```
 
-### Configuration
+### 2. Configure Environment
 
-1. Copy the environment template:
+Copy `.env.example` to `.env` and fill in your values:
+
 ```bash
 cp .env.example .env
 ```
 
-2. Fill in your credentials:
-```env
-SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-PRIVATE_KEY=your_deployer_private_key
-ETHERSCAN_API_KEY=your_etherscan_key
-```
+**Important**: Use a NEW wallet for mainnet deployment (not your personal wallet).
 
-### Compile
+Required values:
+- `PRIVATE_KEY` - Deployer wallet private key (without 0x)
+- `MAINNET_RPC_URL` - Alchemy or Infura mainnet RPC URL
+- `ETHERSCAN_API_KEY` - For contract verification (get from etherscan.io)
+
+### 3. Fund Your Wallet
+
+Send ~0.05-0.1 ETH to your deployment wallet for gas fees.
+
+Check current gas prices: https://etherscan.io/gastracker
+
+### 4. Compile
 
 ```bash
 npm run compile
 ```
 
-### Test
+### 5. Deploy to Mainnet
 
-```bash
-npm test
-```
-
-### Deploy
-
-**To Sepolia Testnet (recommended first):**
-```bash
-npm run deploy:sepolia
-```
-
-**To Ethereum Mainnet:**
 ```bash
 npm run deploy:mainnet
 ```
 
-### Verify on Etherscan
+This will:
+- Deploy with **1 hour** initial cooldown (for testing)
+- Save deployment info to `deployment-mainnet.json`
+- Output the contract address
 
-After deployment:
+### 6. Verify on Etherscan
+
 ```bash
-npx hardhat verify --network mainnet DEPLOYED_CONTRACT_ADDRESS "0x3b90aaaa8f3850edbad137b52e2754d25982e173"
+npx hardhat verify --network mainnet <CONTRACT_ADDRESS> "0x3b90aaaa8f3850edbad137b52e2754d25982e173" "3600"
 ```
 
-## 📖 Contract Functions
+### 7. Update Frontend
 
-### User Functions
+Update your `.env.local` in the CSS Insights web app:
 
-#### `stake(uint256 amount)`
-Stake NFTs to gain subscription access.
-- Requires prior approval of the staking contract
-- Cannot stake while in unstaking cooldown
-
-#### `addToStake(uint256 amount)`
-Add more NFTs to existing stake.
-- Upgrades tier if threshold reached
-
-#### `requestUnstake()`
-Request to unstake all NFTs.
-- Starts 7-day cooldown period
-- User keeps access during cooldown
-
-#### `cancelUnstake()`
-Cancel unstake request and keep subscription.
-
-#### `completeUnstake()`
-Complete unstake after cooldown ends.
-- Returns all NFTs to user
-- Removes subscription access
-
-#### `partialUnstake(uint256 amount)`
-Unstake some NFTs after cooldown.
-- May downgrade tier
-
-### View Functions
-
-#### `getStakeInfo(address user)`
-Returns complete stake information:
-- Amount staked
-- Stake timestamp
-- Unstake request timestamp
-- Cooldown status
-- Current tier
-
-#### `getUserTier(address user)`
-Returns user's current tier (None, Basic, Pro, Premium).
-
-#### `hasMinimumTier(address user, Tier minimumTier)`
-Check if user has at least the specified tier.
-
-#### `getContractStats()`
-Returns total staked, total stakers, and contract balance.
-
-### Admin Functions
-
-#### `setPaused(bool _paused)`
-Pause/unpause the contract.
-
-#### `emergencyWithdrawFor(address user)`
-Emergency function to return NFTs to user (bypasses cooldown).
-
-## 🔄 Integration with Website
-
-### Reading Stake Status (Web3/Ethers.js)
-
-```javascript
-import { ethers } from 'ethers';
-
-const stakingAddress = 'YOUR_DEPLOYED_CONTRACT_ADDRESS';
-const stakingABI = [...]; // Contract ABI
-
-const provider = new ethers.BrowserProvider(window.ethereum);
-const staking = new ethers.Contract(stakingAddress, stakingABI, provider);
-
-// Get user's stake info
-const stakeInfo = await staking.getStakeInfo(userAddress);
-console.log('Staked:', stakeInfo.amount.toString());
-console.log('Tier:', stakeInfo.tier); // 0=None, 1=Basic, 2=Pro, 3=Premium
-
-// Check if user has minimum tier
-const hasProAccess = await staking.hasMinimumTier(userAddress, 2);
+```
+NEXT_PUBLIC_STAKING_CONTRACT_ADDRESS=<new_mainnet_address>
 ```
 
-### Staking NFTs
+Then redeploy to Netlify.
 
-```javascript
-const signer = await provider.getSigner();
-const stakingWithSigner = staking.connect(signer);
+## Changing Cooldown
 
-// First, approve the staking contract
-const nftContract = new ethers.Contract(nftAddress, erc1155ABI, signer);
-await nftContract.setApprovalForAll(stakingAddress, true);
+To change the cooldown from 1 hour to 7 days:
 
-// Then stake
-await stakingWithSigner.stake(5); // Stake 5 NFTs for Pro tier
+```bash
+npm run set-cooldown
 ```
 
-## ⚠️ Important Notes
+Or manually call `setCooldown(604800)` on the contract.
 
-1. **Approval Required**: Users must approve the staking contract before staking
-2. **NFTs Locked**: Staked NFTs are held by the contract
-3. **7-Day Cooldown**: Users must wait 7 days after requesting unstake
-4. **Tier Changes**: If user sells NFTs while staked (shouldn't be possible), contract handles edge cases
+### Cooldown Reference Values
 
-## 🛡️ Security Considerations
+| Duration | Seconds |
+|----------|---------|
+| 1 hour | 3600 |
+| 1 day | 86400 |
+| 7 days | 604800 |
+| 14 days | 1209600 |
+| 30 days | 2592000 |
 
-Before deploying to mainnet:
+## Admin Functions
 
-1. **Get an Audit**: Consider professional audit for mainnet deployment
-2. **Test Thoroughly**: Test on Sepolia first
-3. **Start Paused**: Deploy paused, then unpause after verification
-4. **Multisig Owner**: Transfer ownership to a multisig after deployment
+| Function | Description |
+|----------|-------------|
+| `setCooldown(uint256)` | Change unstaking cooldown (owner only) |
+| `setPaused(bool)` | Pause/unpause contract (owner only) |
+| `emergencyWithdrawFor(address)` | Return user's NFTs bypassing cooldown (owner only, emergencies) |
 
-## 📜 License
+## Contract Addresses
 
-MIT License
+### Mainnet
+- **NFT Contract**: `0x3b90aaaa8f3850edbad137b52e2754d25982e173`
+- **Staking Contract**: (after deployment)
 
-## 🔗 Links
+### Sepolia (Testing)
+- **Previous Test Contract**: `0x8FE531e9789b551cBf64C7BFCFA55Af910a3Eb37`
 
-- [Street Access Pass on OpenSea](https://opensea.io/collection/street-access-pass)
-- [CSS Insights](https://cssinsights.com)
+## Security Notes
+
+1. Only the contract owner can change the cooldown
+2. Cooldown is bounded between 1 hour and 30 days
+3. Changes only affect NEW unstake requests
+4. Users in cooldown continue with their original cooldown time
+5. NFTs are held in the contract (escrow), not sent to owner wallet
+
+## Gas Estimates
+
+| Operation | Estimated Gas | ~Cost at 20 gwei |
+|-----------|---------------|------------------|
+| Deploy | ~1.5M gas | ~$50-75 |
+| Stake | ~150k gas | ~$5-8 |
+| Request Unstake | ~50k gas | ~$2-3 |
+| Complete Unstake | ~100k gas | ~$3-5 |
+| Set Cooldown | ~30k gas | ~$1-2 |
