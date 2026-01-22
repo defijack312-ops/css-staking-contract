@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * - Premium: 10 NFTs = $300/month equivalent access
  *
  * Features:
- * - 7-day unstaking cooldown period
+ * - Adjustable unstaking cooldown period (owner can change)
  * - Tier-based subscription access
  * - Emergency withdrawal by owner
  * - Pause functionality
@@ -26,12 +26,15 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     // ============ Constants ============
     
     uint256 public constant TOKEN_ID = 1; // Street Access Pass token ID
-    uint256 public constant UNSTAKE_COOLDOWN = 7 days;
     
     // Tier thresholds
     uint256 public constant BASIC_THRESHOLD = 1;
     uint256 public constant PRO_THRESHOLD = 5;
     uint256 public constant PREMIUM_THRESHOLD = 10;
+    
+    // Cooldown limits (for safety)
+    uint256 public constant MIN_COOLDOWN = 1 hours;
+    uint256 public constant MAX_COOLDOWN = 30 days;
     
     // ============ Enums ============
     
@@ -57,6 +60,9 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     
     bool public paused;
     
+    // Adjustable cooldown (can be changed by owner)
+    uint256 public unstakeCooldown;
+    
     // ============ Events ============
     
     event Staked(address indexed user, uint256 amount, Tier tier, uint256 timestamp);
@@ -66,6 +72,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     event TierChanged(address indexed user, Tier oldTier, Tier newTier);
     event Paused(bool isPaused);
     event EmergencyWithdraw(address indexed user, uint256 amount);
+    event CooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
     
     // ============ Errors ============
     
@@ -78,6 +85,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     error AlreadyUnstaking();
     error NotUnstaking();
     error TransferFailed();
+    error InvalidCooldown();
     
     // ============ Modifiers ============
     
@@ -89,11 +97,16 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     // ============ Constructor ============
     
     /**
-     * @dev Constructor sets the NFT contract address
+     * @dev Constructor sets the NFT contract address and initial cooldown
      * @param _nftContract Address of the Street Access Pass ERC-1155 contract
+     * @param _initialCooldown Initial unstaking cooldown period in seconds
      */
-    constructor(address _nftContract) Ownable(msg.sender) {
+    constructor(address _nftContract, uint256 _initialCooldown) Ownable(msg.sender) {
+        if (_initialCooldown < MIN_COOLDOWN || _initialCooldown > MAX_COOLDOWN) {
+            revert InvalidCooldown();
+        }
         nftContract = IERC1155(_nftContract);
+        unstakeCooldown = _initialCooldown;
     }
     
     // ============ External Functions ============
@@ -176,7 +189,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     }
     
     /**
-     * @dev Request to unstake - starts 7-day cooldown
+     * @dev Request to unstake - starts cooldown period
      */
     function requestUnstake() external nonReentrant whenNotPaused {
         StakeInfo storage userStake = stakes[msg.sender];
@@ -186,7 +199,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
         
         userStake.unstakeRequestedAt = block.timestamp;
         
-        uint256 availableAt = block.timestamp + UNSTAKE_COOLDOWN;
+        uint256 availableAt = block.timestamp + unstakeCooldown;
         
         emit UnstakeRequested(msg.sender, userStake.amount, availableAt);
     }
@@ -214,7 +227,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
         if (userStake.amount == 0) revert NoStake();
         if (userStake.unstakeRequestedAt == 0) revert UnstakeNotRequested();
         
-        uint256 cooldownEnd = userStake.unstakeRequestedAt + UNSTAKE_COOLDOWN;
+        uint256 cooldownEnd = userStake.unstakeRequestedAt + unstakeCooldown;
         if (block.timestamp < cooldownEnd) revert CooldownNotComplete();
         
         uint256 amount = userStake.amount;
@@ -246,7 +259,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
         if (amount == 0 || amount > userStake.amount) revert InvalidAmount();
         if (userStake.unstakeRequestedAt == 0) revert UnstakeNotRequested();
         
-        uint256 cooldownEnd = userStake.unstakeRequestedAt + UNSTAKE_COOLDOWN;
+        uint256 cooldownEnd = userStake.unstakeRequestedAt + unstakeCooldown;
         if (block.timestamp < cooldownEnd) revert CooldownNotComplete();
         
         Tier oldTier = userStake.tier;
@@ -297,7 +310,7 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
         tier = userStake.tier;
         
         if (unstakeRequestedAt != 0) {
-            unstakeAvailableAt = unstakeRequestedAt + UNSTAKE_COOLDOWN;
+            unstakeAvailableAt = unstakeRequestedAt + unstakeCooldown;
             isInCooldown = block.timestamp < unstakeAvailableAt;
             cooldownSecondsRemaining = isInCooldown ? unstakeAvailableAt - block.timestamp : 0;
         }
@@ -330,14 +343,41 @@ contract StreetAccessPassStaking is ERC1155Holder, Ownable, ReentrancyGuard {
     function getContractStats() external view returns (
         uint256 _totalStaked,
         uint256 _totalStakers,
-        uint256 contractBalance
+        uint256 contractBalance,
+        uint256 currentCooldown
     ) {
         _totalStaked = totalStaked;
         _totalStakers = totalStakers;
         contractBalance = nftContract.balanceOf(address(this), TOKEN_ID);
+        currentCooldown = unstakeCooldown;
+    }
+    
+    /**
+     * @dev Get current cooldown period
+     */
+    function getCooldown() external view returns (uint256) {
+        return unstakeCooldown;
     }
     
     // ============ Admin Functions ============
+    
+    /**
+     * @dev Update the unstaking cooldown period
+     * @param newCooldown New cooldown period in seconds
+     * 
+     * Note: This only affects NEW unstake requests.
+     * Users already in cooldown will use the cooldown that was active when they requested.
+     */
+    function setCooldown(uint256 newCooldown) external onlyOwner {
+        if (newCooldown < MIN_COOLDOWN || newCooldown > MAX_COOLDOWN) {
+            revert InvalidCooldown();
+        }
+        
+        uint256 oldCooldown = unstakeCooldown;
+        unstakeCooldown = newCooldown;
+        
+        emit CooldownUpdated(oldCooldown, newCooldown);
+    }
     
     /**
      * @dev Pause/unpause the contract
